@@ -3,18 +3,25 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import Counter
-from matplotlib.ticker import AutoMinorLocator
+from matplotlib.ticker import AutoMinorLocator, MaxNLocator
 import webcolors
 
 
 class ImageCluster:
     def __init__(self, image_path, n_clusters=5, remove_low_alpha=True):
+        # Inizializzazione della classe con il percorso dell'immagine, il numero di cluster e un flag per rimuovere i pixel con bassa trasparenza
         self.image_path = image_path
         self.n_clusters = n_clusters
         self.remove_low_alpha = remove_low_alpha
+
+        # Apertura dell'immagine e conversione in formato RGBA
         self.img = Image.open(self.image_path).convert("RGBA")
+
+        # Conversione dell'immagine in un array numpy e ridimensionamento in un array 2D
         self.img_array = np.array(self.img)
         self.data = self.img_array.reshape(-1, 4)
+
+        # Inizializzazione di variabili che verranno utilizzate in seguito
         self.clustered_img = None
         self.labels = None
         self.center_colors = None
@@ -24,9 +31,14 @@ class ImageCluster:
         self.counts = None
         self.total_pixels = None
         self.cluster_percentages = None
+        self.clusters_percentages_colors = None
         self.counts_dict = None
         self.ordered_colors = None
         self.color_names = None
+
+        self.ordered_clusters = None
+        self.ordered_percentages = None
+        self.ordered_colors = None
 
     def filter_alpha(self):
         if self.remove_low_alpha:
@@ -37,10 +49,17 @@ class ImageCluster:
         return mask
 
     def cluster(self):
+        # Applicazione del filtro alpha prima di eseguire il clustering
         mask = self.filter_alpha()
+
+        # Esecuzione dell'algoritmo K-Means sull'array 2D
         kmeans = KMeans(n_clusters=self.n_clusters, random_state=0)
         self.labels = kmeans.fit_predict(self.data)
+
+        # Salvataggio dei colori dei centri dei cluster
         self.center_colors = kmeans.cluster_centers_
+
+        # Sostituzione dell'immagine originale con l'immagine clusterizzata
         self.clustered_img = np.zeros_like(self.img_array)
         labels_full = np.full(mask.shape[0], -1)
         labels_full[mask] = self.labels
@@ -57,13 +76,23 @@ class ImageCluster:
                         255,
                         0,
                     ]  # white or transparent
+
+        # Calcolo del numero di pixel in ogni cluster e della percentuale di pixel che ogni cluster rappresenta nell'immagine totale
         self.unique_clusters, self.counts = np.unique(self.labels, return_counts=True)
         self.counts_dict = dict(zip(self.unique_clusters, self.counts))
         self.ordered_colors = [self.center_colors[i] for i in self.counts_dict.keys()]
         self.total_pixels = np.prod(self.img_array.shape[:2])
-        self.cluster_percentages = (
-            self.counts / self.total_pixels
-        ) * 100  # Percentages
+        self.cluster_percentages = (self.counts / len(self.data)) * 100  # Percentages
+        # Creazione di una lista di tuple, dove ogni tupla contiene il cluster, la percentuale e il colore del centro del cluster
+        self.clusters_percentages_colors = list(
+            zip(self.unique_clusters, self.cluster_percentages, self.center_colors)
+        )
+        # Ordinamento della lista in base alla percentuale, in ordine decrescente
+        self.clusters_percentages_colors.sort(key=lambda x: x[1], reverse=True)
+        # Separazione dei cluster, delle percentuali e dei colori in tre liste separate
+        self.ordered_clusters, self.ordered_percentages, self.ordered_colors = zip(
+            *self.clusters_percentages_colors
+        )
 
     def RGB_HEX(self, color):
         return "#{:02x}{:02x}{:02x}".format(int(color[0]), int(color[1]), int(color[2]))
@@ -73,12 +102,18 @@ class ImageCluster:
             int(color[0]), int(color[1]), int(color[2]), int(color[3])
         )
 
+    def hex_to_rgb(self, hex_color):
+        # Rimuove il carattere '#' se presente
+        hex_color = hex_color.lstrip("#")
+        # Converte l'esadecimale in RGB
+        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
     def HEX_COLORS(self):
         self.hex_colors = [
             self.RGBA_HEX(self.ordered_colors[i]) for i in self.counts_dict.keys()
         ]
 
-    def RGB__COLORS(self):
+    def RGB_COLORS(self):
         return [self.ordered_colors[i] for i in self.counts_dict.keys()]
 
     def get_color_names(self):
@@ -100,20 +135,28 @@ class ImageCluster:
         return min_colors[min(min_colors.keys())]
 
     def calculate_brightness(self, color):
-        # Converti il colore da hex a RGB
-        color = [int(color[i : i + 2], 16) for i in (0, 2, 4)]
+        # Converti il colore da hex a RGB prima
+        # color = [int(color[i : i + 2], 16) for i in (0, 2, 4)]
         # Calcola la luminosità come la media dei valori RGB
         return sum(color) / (3 * 255)
 
-    def plot_images(self):
-        plt.subplot(1, 2, 1)
+    def plot_original_image(self):
         plt.imshow(self.img_array)
         plt.title("Original Image")
         plt.axis("off")
-        plt.subplot(1, 2, 2)
+        plt.tight_layout()
+
+    def plot_clustered_image(self):
         plt.imshow(self.clustered_img)
         plt.title("Clustered Image ({} clusters)".format(self.n_clusters))
         plt.axis("off")
+        plt.tight_layout()
+
+    def plot_images(self):
+        plt.subplot(1, 2, 1)
+        self.plot_original_image()
+        plt.subplot(1, 2, 2)
+        self.plot_clustered_image()
         plt.tight_layout()
 
     def plot_cluster_percentages(self):
@@ -129,6 +172,8 @@ class ImageCluster:
         plt.xlabel("Cluster")
         plt.ylabel("Percentage (%)")
         plt.title("Percentage of Pixels in each Cluster")
+        # Imposta l'asse x per avere solo numeri interi
+        plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
         plt.tight_layout()
 
     def plot_pie_chart(self):
@@ -146,39 +191,34 @@ class ImageCluster:
             counterclock=False,
         )
         for i in range(len(self.hex_colors)):
-            brightness = self.calculate_brightness(self.hex_colors[i][1:])
+            brightness = self.calculate_brightness(self.hex_to_rgb(self.hex_colors[i][1:]))
             if brightness < 0.5:
                 autotexts[i].set_color("white")
         plt.tight_layout()
 
     def plot_bar_chart(self):
-        counts_dict = dict(
-            sorted(self.counts_dict.items(), key=lambda item: item[1], reverse=True)
-        )  # Sort in descending order
-        color_order = [
-            self.hex_colors[i] for i in counts_dict.keys()
-        ]  # Order colors in the same way as counts
         bottom = 0
-        for i, color in zip(counts_dict.keys(), color_order):
-            height = counts_dict[i] * 100 / sum(counts_dict.values())
+        for i, color, percentage in zip(
+            self.ordered_clusters, self.ordered_colors, self.ordered_percentages
+        ):
             plt.bar(
                 x="color",
-                height=height,
-                color=color,
+                height=percentage,
+                color=np.array(color) / 255,
                 bottom=bottom,
             )
-            brightness = self.calculate_brightness(color[1:])
-            text_color = "white" if brightness < 0.5 else "black"
+            brightness = self.calculate_brightness(color)
+            text_color = "white" if brightness < 0.75 else "black"
             plt.text(
                 "color",
-                bottom + height / 2,
-                f"{counts_dict[i]}",
+                bottom + percentage / 2,
+                f"{self.counts_dict[i]}",
                 ha="center",
                 va="center",
                 color=text_color,
             )
             plt.gca().yaxis.set_minor_locator(AutoMinorLocator())
-            bottom += height
+            bottom += percentage
         plt.gca().spines["top"].set_visible(False)
         plt.gca().spines["right"].set_visible(False)
         plt.gca().spines["bottom"].set_visible(False)
