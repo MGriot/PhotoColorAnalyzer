@@ -39,6 +39,7 @@ class ImageCluster:
         self.ordered_clusters = None
         self.ordered_percentages = None
         self.ordered_colors = None
+        self.ordered_counts = None
 
     def filter_alpha(self):
         if self.remove_low_alpha:
@@ -83,21 +84,29 @@ class ImageCluster:
         self.ordered_colors = [self.center_colors[i] for i in self.counts_dict.keys()]
         self.total_pixels = np.prod(self.img_array.shape[:2])
         self.cluster_percentages = (self.counts / len(self.data)) * 100  # Percentages
-        # Creazione di una lista di tuple, dove ogni tupla contiene il cluster, la percentuale e il colore del centro del cluster
-        self.clusters_percentages_colors = list(
-            zip(self.unique_clusters, self.cluster_percentages, self.center_colors)
+        # Creazione di una lista di tuple, dove ogni tupla contiene il cluster, la percentuale, il conteggio e il colore del centro del cluster
+        self.clusters_percentages_counts_colors = list(
+            zip(
+                self.unique_clusters,
+                self.cluster_percentages,
+                self.counts,
+                self.center_colors,
+            )
         )
         # Ordinamento della lista in base alla percentuale, in ordine decrescente
-        self.clusters_percentages_colors.sort(key=lambda x: x[1], reverse=True)
-        # Separazione dei cluster, delle percentuali e dei colori in tre liste separate
-        self.ordered_clusters, self.ordered_percentages, self.ordered_colors = zip(
-            *self.clusters_percentages_colors
-        )
+        self.clusters_percentages_counts_colors.sort(key=lambda x: x[1], reverse=True)
+        # Separazione dei cluster, delle percentuali, dei conteggi e dei colori in quattro liste separate
+        (
+            self.ordered_clusters,
+            self.ordered_percentages,
+            self.ordered_counts,
+            self.ordered_colors,
+        ) = zip(*self.clusters_percentages_counts_colors)
 
-    def RGB_HEX(self, color):
+    def rgb_to_hex(self, color):
         return "#{:02x}{:02x}{:02x}".format(int(color[0]), int(color[1]), int(color[2]))
 
-    def RGBA_HEX(self, color):
+    def rgba_to_hex(self, color):
         return "#{:02x}{:02x}{:02x}{:02x}".format(
             int(color[0]), int(color[1]), int(color[2]), int(color[3])
         )
@@ -110,7 +119,7 @@ class ImageCluster:
 
     def HEX_COLORS(self):
         self.hex_colors = [
-            self.RGBA_HEX(self.ordered_colors[i]) for i in self.counts_dict.keys()
+            self.rgba_to_hex(self.ordered_colors[i]) for i in self.counts_dict.keys()
         ]
 
     def RGB_COLORS(self):
@@ -152,6 +161,38 @@ class ImageCluster:
         plt.axis("off")
         plt.tight_layout()
 
+    def plot_clustered_image_grid(self):
+        # Crea una griglia vuota con le stesse dimensioni dell'immagine clusterizzata
+        grid = np.zeros((self.img_array.shape[0], self.img_array.shape[1]))
+
+        # Crea un array di etichette con la stessa forma dell'immagine originale
+        labels_full = np.full((self.img_array.shape[0] * self.img_array.shape[1]), -1)
+
+        # Crea un indice numerico che corrisponda ai pixel con un valore alfa alto in labels_full
+        if self.remove_low_alpha:
+            alpha_high_index = np.where(self.img_array.reshape(-1, 4)[:, 3] >= 125)[0]
+        else:
+            alpha_high_index = np.where(self.img_array.reshape(-1, 4)[:, 3])[0]
+
+        # Riempie l'array di etichette con le etichette dei cluster solo per i pixel con un valore alfa alto
+        labels_full[alpha_high_index] = self.labels
+
+        # Ridimensiona l'array di etichette per corrispondere alla forma dell'immagine originale
+        labels_full = labels_full.reshape(
+            self.img_array.shape[0], self.img_array.shape[1]
+        )
+
+        # Per ogni cluster, riempi le celle corrispondenti della griglia con l'indice del cluster
+        for i, cluster in enumerate(self.unique_clusters):
+            grid[labels_full == cluster] = i
+
+        # Visualizza la griglia
+        plt.imshow(grid, cmap="nipy_spectral")
+        plt.title("Clustered Image Grid ({} clusters)".format(self.n_clusters))
+        plt.axis("off")
+        plt.colorbar(label="Cluster Index")
+        plt.tight_layout()
+
     def plot_images(self):
         plt.subplot(1, 2, 1)
         self.plot_original_image()
@@ -177,23 +218,24 @@ class ImageCluster:
         plt.tight_layout()
 
     def plot_pie_chart(self):
-        self.HEX_COLORS()
-        self.get_color_names()
-        labels = [
-            f"{name}\n{hex}" for name, hex in zip(self.color_names, self.hex_colors)
-        ]
+        # Normalizza i colori ordinati
+        normalized_colors = [(color / 255).tolist() for color in self.ordered_colors]
+
+        # Crea il grafico a torta
         patches, texts, autotexts = plt.pie(
-            self.counts,
-            labels=labels,
-            colors=self.hex_colors,
+            self.ordered_counts,
+            labels=self.ordered_counts,
+            colors=normalized_colors,
             autopct="%1.1f%%",
-            startangle=45,
-            counterclock=False,
+            startangle=140,
         )
-        for i in range(len(self.hex_colors)):
-            brightness = self.calculate_brightness(self.hex_to_rgb(self.hex_colors[i][1:]))
-            if brightness < 0.5:
+        # Colora i labels in base alla luminosità del colore
+        for i in range(len(self.ordered_colors)):
+            brightness = self.calculate_brightness(self.ordered_colors[i])
+            if brightness < 0.75:
                 autotexts[i].set_color("white")
+
+        plt.axis("equal")  # Assicura che il grafico sia disegnato come un cerchio.
         plt.tight_layout()
 
     def plot_bar_chart(self):
